@@ -1,272 +1,207 @@
-Tari LMDB Inspector
-Tari LMDB Inspector is a powerful, multi-interface tool for exploring and debugging Tari blockchain data stored in LMDB databases. It offers four modes—CLI, TUI (terminal dashboard), Web (browser-based dashboard with WebSocket), and key structure inspection—making it an essential utility for developers, node operators, and blockchain enthusiasts analyzing Tari's blockchain data.
-Table of Contents
+# Tari LMDB Inspector
 
-Features
-Installation
-Prerequisites
-Build from Source
+> ⚠️ **Work in Progress** - This tool is experimental and under active development. Use with caution in production environments.
 
+A powerful, multi-interface tool for exploring and debugging Tari blockchain data stored in LMDB databases. Designed for developers, node operators, and blockchain enthusiasts who need deep insights into Tari's blockchain data structure and storage.
 
-Usage
-CLI Mode
-TUI Mode
-Web Mode
-Key Inspection Mode
+## ✨ Features
 
+- **🖥️ CLI Mode**: Query blocks, transactions, and ranges via command-line interface
+- **📊 TUI Mode**: Interactive terminal dashboard with real-time blockchain monitoring
+- **🌐 Web Mode**: Browser-based dashboard with WebSocket updates and REST API
+- **🔍 Key Inspection Mode**: Debug LMDB key structures and data linking mechanisms
+- **📈 Flexible Access**: Works with any Tari LMDB database, with demo data fallback
 
-Database Structure
-For Node Operators
-Contributing
-License
-Acknowledgments
+## 📋 Table of Contents
 
-Features
+- [Installation](#installation)
+- [Usage](#usage)
+- [Interface Modes](#interface-modes)
+- [Database Structure](#database-structure)
+- [For Node Operators](#for-node-operators)
+- [Contributing](#contributing)
 
-CLI Mode: Query blocks, transactions, and block ranges via a command-line interface.
-TUI Mode: Interactive terminal dashboard for real-time blockchain monitoring using ratatui.
-Web Mode: Browser-based dashboard with real-time WebSocket updates, powered by axum.
-Key Inspection Mode: Analyze LMDB key structures to understand Tari's data storage and linking.
-Flexible Data Access: Works with any valid Tari LMDB database, with fallback to demo data for Web and Inspect modes if the database is unavailable.
+## 🚀 Installation
 
-Installation
-Prerequisites
+### Prerequisites
 
-Rust: Install the Rust toolchain (cargo, rustc) via rustup.
-Tari LMDB Database: A valid Tari mainnet database (e.g., ~/.tari/mainnet/data/base_node/db). Web and Inspect modes can use demo data if no database is available.
-Optional: Install jq for parsing JSON output in CLI mode (sudo apt install jq on Debian/Ubuntu or equivalent).
+- **Rust**: Install via [rustup](https://rustup.rs/)
+- **Tari Database**: Valid Tari mainnet LMDB database (typically `~/.tari/mainnet/data/base_node/db`)
+- **Optional**: `jq` for JSON parsing (`sudo apt install jq` on Ubuntu/Debian)
 
-Build from Source
-Clone the repository and build the project:
+### Build from Source
+
+```bash
 git clone https://github.com/OIEIEIO/tari-lmdb-inspector.git
 cd tari-lmdb-inspector
 cargo build --release
+```
 
-The executable will be located at target/release/tari-lmdb-inspector.
-Usage
-Run the tool with the -d or --database flag to specify the Tari LMDB database path (defaults to ~/.tari/mainnet/data/base_node/db). Select an interface mode using one of the subcommands: cli, tui, web, or inspect.
-CLI Mode
-View block and transaction details directly in the terminal.
-# Show details for block 64754
-cargo run --release -- -d ~/.tari/mainnet/data/base_node/db cli --detail 64754
+The executable will be available at `target/release/tari-lmdb-inspector`.
 
-# Show the last 3 blocks
-cargo run --release -- -d ~/.tari/mainnet/data/base_node/db cli --count 3
+> **Note**: You can use `cargo run` for development or `cargo run --release` for optimized builds.
 
-# Show blocks in range 64750-64754
-cargo run --release -- -d ~/.tari/mainnet/data/base_node/db cli --range 64750-64754
+## 🎯 Usage
 
-TUI Mode
-Launch an interactive terminal dashboard for real-time blockchain monitoring.
-cargo run --release -- -d ~/.tari/mainnet/data/base_node/db tui --refresh 5
+All commands require specifying the database path with `-d` or `--database`:
 
-Controls:
+```bash
+cargo run -- -d ~/.tari/mainnet/data/base_node/db <MODE> [OPTIONS]
+```
 
-q or Esc: Quit the dashboard.
-r: Force a data refresh.
+## 🖱️ Interface Modes
 
-Web Mode
-Start a web server with a browser-based dashboard and real-time WebSocket updates.
-cargo run --release -- -d ~/.tari/mainnet/data/base_node/db web --port 8080 --bind 127.0.0.1
+### CLI Mode
 
+Direct terminal interface for block and transaction queries.
 
-Access the dashboard at http://localhost:8080.
-API endpoints:
-GET /api/block/<height>: Retrieve details for a specific block.curl -s http://localhost:8080/api/block/64754 | jq
+```bash
+# View specific block details
+cargo run -- -d ~/.tari/mainnet/data/base_node/db cli --detail 64754
 
+# Show last few blocks (default 3)
+cargo run -- -d ~/.tari/mainnet/data/base_node/db cli
 
-GET /api/blocks/range?start=X&end=Y: Fetch blocks in a range (max 1000 blocks).
-GET /api/dashboard: Get dashboard data.
-ws://localhost:8080/ws: Connect to WebSocket for real-time updates.
+# Show last 5 blocks
+cargo run -- -d ~/.tari/mainnet/data/base_node/db cli --count 5
 
+# Query block range
+cargo run -- -d ~/.tari/mainnet/data/base_node/db cli --range 64750-64754
 
+# Show specific block height
+cargo run -- -d ~/.tari/mainnet/data/base_node/db cli --block 64754
+```
 
-Key Inspection Mode
-Debug LMDB key structures to understand how Tari stores transaction data.
-# Run a simple prefix test for block 64754
-cargo run --release -- -d ~/.tari/mainnet/data/base_node/db inspect --simple-test --block-height 64754
+### TUI Mode
 
-# Run a thorough key investigation for block 64754
-cargo run --release -- -d ~/.tari/mainnet/data/base_node/db inspect --thorough --block-height 64754
+Interactive terminal dashboard with real-time monitoring.
 
-# Inspect key structures of all tables
-cargo run --release -- -d ~/.tari/mainnet/data/base_node/db inspect --all-tables
+```bash
+# Launch TUI dashboard (default 5-second refresh)
+cargo run -- -d ~/.tari/mainnet/data/base_node/db tui
 
-# Test multiple blocks for key patterns
-cargo run --release -- -d ~/.tari/mainnet/data/base_node/db inspect --test-patterns
+# Launch with custom refresh interval
+cargo run -- -d ~/.tari/mainnet/data/base_node/db tui --refresh 10
+```
 
-Database Structure
-The tool interacts with Tari’s LMDB database, which includes the following tables (based on a sample mainnet database):
+**Controls:**
+- `q` or `Esc`: Quit
+- `r`: Force refresh
 
+### Web Mode
 
+Browser-based dashboard with REST API and WebSocket support.
 
-Table Name
-Entry Count
+```bash
+# Start web server (default port 8080)
+cargo run -- -d ~/.tari/mainnet/data/base_node/db web --port 8080
 
+# Start on different port
+cargo run -- -d ~/.tari/mainnet/data/base_node/db web --port 3000
 
+# Enable CORS for development
+cargo run -- -d ~/.tari/mainnet/data/base_node/db web --port 8080 --cors
 
-Main DB
-34
+# Bind to specific address
+cargo run -- -d ~/.tari/mainnet/data/base_node/db web --port 8080 --bind 0.0.0.0
+```
 
+**Access:** http://localhost:8080
 
-block_hashes
-64,823
+**API Endpoints:**
+- `GET /api/block/<height>` - Get block details
+- `GET /api/blocks/range?start=X&end=Y` - Get block range (max 1000)
+- `GET /api/dashboard` - Dashboard data
+- `ws://localhost:8080/ws` - WebSocket for real-time updates
 
+```bash
+# Example API usage
+curl -s http://localhost:8080/api/block/64754 | jq
+```
 
-deleted_txo_hash_to_header_index
-3,357,980
+### Key Inspection Mode
 
+Debug and analyze LMDB key structures and data relationships.
 
-header_accumulated_data
-64,823
+```bash
+# Basic investigation (runs comprehensive analysis)
+cargo run -- -d ~/.tari/mainnet/data/base_node/db inspect
 
+# Simple prefix test for linking theory
+cargo run -- -d ~/.tari/mainnet/data/base_node/db inspect --simple-test --block-height 64754
 
-headers
-64,823
+# Comprehensive key investigation
+cargo run -- -d ~/.tari/mainnet/data/base_node/db inspect --thorough --block-height 64754
 
+# Inspect all table structures
+cargo run -- -d ~/.tari/mainnet/data/base_node/db inspect --all-tables
 
-inputs
-3,357,980
+# Test pattern across multiple blocks
+cargo run -- -d ~/.tari/mainnet/data/base_node/db inspect --test-patterns
+```
 
+## 📊 Database Structure
 
-jmt_node_data
-30,360,201
+The tool analyzes Tari's LMDB database containing the following tables:
 
+| Table Name | Entries | Description |
+|------------|---------|-------------|
+| `headers` | 64,823 | Block headers with metadata |
+| `kernels` | 1,416,107 | Transaction kernels (fees, signatures) |
+| `utxos` | 4,377,143 | Unspent transaction outputs |
+| `inputs` | 3,357,980 | Transaction inputs (spent outputs) |
+| `block_hashes` | 64,823 | Block hash → height mapping |
+| `kernel_excess_index` | 1,416,107 | Kernel excess → block mapping |
+| `txos_hash_to_index` | 4,377,143 | Output hash → index mapping |
+| `deleted_txo_hash_to_header_index` | 3,357,980 | Spent output → block mapping |
+| `header_accumulated_data` | 64,823 | Accumulated blockchain data |
+| `jmt_node_data` | 30,360,201 | Jellyfish Merkle Tree nodes |
+| `jmt_unique_key_data` | 7,734,870 | JMT unique keys |
+| `jmt_value_data` | 7,734,870 | JMT values |
+| `mmr_peak_data` | 64,823 | Merkle Mountain Range peaks |
+| `payref_to_output_index` | 4,377,143 | Payment reference mappings |
 
-jmt_unique_key_data
-7,734,870
+*Table sizes based on sample mainnet database*
 
+## 🔧 For Node Operators
 
-jmt_value_data
-7,734,870
+This tool helps Tari node operators:
 
+- **Monitor Health**: Real-time blockchain monitoring via TUI/Web dashboards
+- **Debug Issues**: Inspect specific blocks, transactions, and data inconsistencies
+- **Optimize Performance**: Analyze LMDB key structures and access patterns
+- **Verify Integrity**: Check table sizes, relationships, and data consistency
+- **Troubleshoot**: Deep-dive into transaction linking and storage mechanisms
 
-kernel_excess_index
-1,416,107
+## 🤝 Contributing
 
+We welcome contributions! This is an experimental tool under active development.
 
-kernel_excess_sig_index
-1,416,107
+1. Fork the repository
+2. Create a feature branch: `git checkout -b feature/your-feature`
+3. Commit changes: `git commit -m "Add your feature"`
+4. Push to branch: `git push origin feature/your-feature`
+5. Open a pull request
 
+Please ensure code follows Rust best practices and includes tests where applicable.
 
-kernel_mmr_size_index
-64,823
+## ⚠️ Important Notes
 
+- **Experimental Status**: This tool is work-in-progress and may have bugs
+- **Database Safety**: Uses read-only access to LMDB databases
+- **Performance**: Large databases may require significant memory and processing time
+- **Compatibility**: Designed for Tari mainnet LMDB format
 
-kernels
-1,416,107
+## 📄 License
 
-
-metadata
-9
-
-
-mmr_peak_data
-64,823
-
-
-monero_seed_height
-33
-
-
-monero_seed_height_index
-33
-
-
-orphan_accumulated_data
-469
-
-
-orphan_chain_tips
-461
-
-
-orphan_parent_map_index
-469
-
-
-orphans
-469
-
-
-payref_to_output_index
-4,377,143
-
-
-reorgs
-536
-
-
-txos_hash_to_index
-4,377,143
-
-
-utxo_commitment_index
-1,019,163
-
-
-utxos
-4,377,143
-
-
-bad_blocks
-0
-
-
-contract_index
-0
-
-
-template_registrations
-0
-
-
-unique_id_index
-0
-
-
-utxo_smt
-0
-
-
-validator_nodes
-0
-
-
-validator_nodes_activation_queue
-0
-
-
-validator_nodes_exit
-0
-
-
-validator_nodes_mapping
-0
-
-
-This table helps node operators and developers understand the scale and organization of Tari’s blockchain data.
-For Node Operators
-Tari node operators can leverage tari-lmdb-inspector to:
-
-Monitor blockchain health in real-time using the TUI or Web dashboard.
-Inspect specific blocks or transactions to troubleshoot issues.
-Analyze LMDB key structures to optimize node performance or debug data inconsistencies.
-Verify database integrity by checking table sizes and relationships.
-
-Contributing
-We welcome contributions to improve tari-lmdb-inspector! To contribute:
-
-Fork the repository.
-Create a feature branch (git checkout -b feature/your-feature).
-Commit your changes (git commit -m "Add your feature").
-Push to the branch (git push origin feature/your-feature).
-Open a pull request on GitHub.
-
-Please ensure your code adheres to Rust best practices and includes tests where applicable.
-License
 This project is licensed under the MIT License.
-Acknowledgments
 
-Built with Rust, axum, ratatui, and lmdb-zero.
-Inspired by the Tari community’s need for robust blockchain debugging tools.
+## 🙏 Acknowledgments
+
+- Built with Rust ecosystem: `axum`, `ratatui`, `lmdb-zero`
+- Inspired by the Tari community's need for robust blockchain debugging tools
+- Special thanks to the Tari development team for creating an accessible blockchain platform
+
+---
+
+*For issues, feature requests, or questions, please open an issue on GitHub.*
