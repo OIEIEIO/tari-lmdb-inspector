@@ -2,7 +2,7 @@
 name = "tari-lmdb-inspector"
 version = "0.3.0"
 edition = "2024"
-authors = ["Jorge <jorge@example.com>"]
+authors = ["Jorge <oieieio@protonmail.com>"]
 description = "Multi-interface Tari blockchain explorer with TUI and Web dashboards"
 readme = "README.md"
 license = "MIT OR Apache-2.0"
