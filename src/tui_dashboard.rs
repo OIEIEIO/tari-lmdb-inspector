@@ -57,6 +57,7 @@ impl TuiApp {
                 timestamp: block.header.timestamp,
                 transaction_count: 5, // Placeholder
                 interval_seconds: None,
+                pow_algorithm: Some("MockAlgo".to_string()),
             }
         }).collect();
 

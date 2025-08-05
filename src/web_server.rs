@@ -207,14 +207,21 @@ async fn get_block_detail(
                     "version": block_detail.header.version,
                     "timestamp": block_detail.header.timestamp,
                     "nonce": block_detail.header.nonce,
-                    "previous_hash": block_detail.header.previous_hash
+                    "previous_hash": block_detail.header.previous_hash,
+                    "output_mr": block_detail.header.output_mr,
+                    "kernel_mr": block_detail.header.kernel_mr,
+                    "input_mr": block_detail.header.input_mr,
+                    "total_kernel_offset": block_detail.header.total_kernel_offset,
+                    "total_script_offset": block_detail.header.total_script_offset,
+                    "pow_data_hash": block_detail.header.pow_data_hash,
+                    "raw_header_length": block_detail.header.raw_header_length,
+                    "pow_algorithm": block_detail.header.pow_algorithm
                 },
                 "transactions": {
                     "inputs": block_detail.transactions.inputs,
                     "outputs": block_detail.transactions.outputs,
                     "kernels": block_detail.transactions.kernels
-                },
-                "header_analysis": block_detail.header_analysis
+                }
             });
             Ok(Json(response))
         }
@@ -248,7 +255,16 @@ async fn get_blocks_range(
                     serde_json::json!({
                         "height": block.height,
                         "hash": block.hash,
-                        "timestamp": block.header.timestamp
+                        "timestamp": block.header.timestamp,
+                        "previous_hash": block.header.previous_hash,
+                        "output_mr": block.header.output_mr,
+                        "kernel_mr": block.header.kernel_mr,
+                        "input_mr": block.header.input_mr,
+                        "total_kernel_offset": block.header.total_kernel_offset,
+                        "total_script_offset": block.header.total_script_offset,
+                        "pow_data_hash": block.header.pow_data_hash,
+                        "raw_header_length": block.header.raw_header_length,
+                        "pow_algorithm": block.header.pow_algorithm
                     })
                 }).collect::<Vec<_>>()
             });
@@ -365,6 +381,7 @@ async fn handle_websocket_message(
                                          block_detail.transactions.outputs.len() + 
                                          block_detail.transactions.kernels.len(),
                         interval_seconds: None,
+                        pow_algorithm: Some(block_detail.header.pow_algorithm.clone()),
                     };
                     
                     let transactions = crate::data_models::TransactionDetail {
@@ -429,6 +446,7 @@ async fn update_dashboard_data(state: &AppState) -> Result<()> {
                     timestamp: block.header.timestamp,
                     transaction_count: 0,
                     interval_seconds: None,
+                    pow_algorithm: Some(block.header.pow_algorithm),
                 }
             }).collect();
             
@@ -467,6 +485,7 @@ async fn update_dashboard_data(state: &AppState) -> Result<()> {
                     timestamp: now - (i * 120), // 2 minute intervals
                     transaction_count: 5 + (i % 3) as usize,
                     interval_seconds: if i < 199 { Some(120) } else { None },
+                    pow_algorithm: Some("RandomXM".to_string()),
                 }
             }).collect();
             

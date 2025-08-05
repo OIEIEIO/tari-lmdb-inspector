@@ -37,6 +37,7 @@ pub struct BlockInfo {
     pub timestamp: u64,
     pub transaction_count: usize,
     pub interval_seconds: Option<i64>,
+    pub pow_algorithm: Option<String>,
 }
 
 /// Network statistics

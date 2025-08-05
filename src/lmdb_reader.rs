@@ -1,5 +1,5 @@
 // File: src/lmdb_reader.rs
-// Version: 2.19.0 - Changed header_analysis to structured HeaderAnalysis for JSON
+// Version: 2.21.0 - Removed explorer_hash, fixed move errors
 
 use std::path::Path;
 use lmdb_zero::{EnvBuilder, Database, ReadTransaction, ConstAccessor};
@@ -47,13 +47,21 @@ pub enum BlockFilter {
     Specific(u64),          // Show specific block height
 }
 
-#[derive(Debug, Serialize, Deserialize)] 
+#[derive(Debug, Serialize, Deserialize)]
 pub struct BlockHeaderLite {
     pub version: u16,
     pub height: u64,
     pub previous_hash: String,
     pub timestamp: u64,
     pub nonce: u64,
+    pub output_mr: String,
+    pub kernel_mr: String,
+    pub input_mr: String,
+    pub total_kernel_offset: String,
+    pub total_script_offset: String,
+    pub pow_data_hash: String,
+    pub raw_header_length: usize,
+    pub pow_algorithm: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -66,7 +74,7 @@ pub struct BlockSummary {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TransactionSummary {
     pub inputs: Vec<InputSummary>,
-    pub outputs: Vec<OutputSummary>, 
+    pub outputs: Vec<OutputSummary>,
     pub kernels: Vec<KernelSummary>,
 }
 
@@ -91,30 +99,15 @@ pub struct KernelSummary {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct HeaderAnalysis {
-    pub explorer_hash: String,
-    pub previous_hash: String,
-    pub output_mr: String,
-    pub kernel_mr: String,
-    pub input_mr: String,
-    pub total_kernel_offset: String,
-    pub total_script_offset: String,
-    pub pow_data_hash: String,
-    pub raw_header_length: usize,
-    pub pow_algorithm: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
 pub struct BlockDetailSummary {
     pub height: u64,
     pub hash: String,
     pub header: BlockHeaderLite,
     pub transactions: TransactionSummary,
-    pub header_analysis: HeaderAnalysis,  // Changed to structured
 }
 
-impl From<(u64, String, BlockHeader)> for BlockSummary {
-    fn from((height, hash, header): (u64, String, BlockHeader)) -> Self {
+impl From<(u64, String, BlockHeader, &[u8])> for BlockSummary {
+    fn from((height, hash, header, header_data): (u64, String, BlockHeader, &[u8])) -> Self {
         Self {
             height,
             hash,
@@ -124,6 +117,14 @@ impl From<(u64, String, BlockHeader)> for BlockSummary {
                 previous_hash: hex::encode(&header.prev_hash[..]),
                 timestamp: header.timestamp.as_u64(),
                 nonce: header.nonce,
+                output_mr: hex::encode(&header.output_mr),
+                kernel_mr: hex::encode(&header.kernel_mr),
+                input_mr: hex::encode(&header.input_mr),
+                total_kernel_offset: hex::encode(header.total_kernel_offset.as_bytes()),
+                total_script_offset: hex::encode(header.total_script_offset.as_bytes()),
+                pow_data_hash: if !header.pow.pow_data.is_empty() { hex::encode(&header.pow.pow_data) } else { "empty".to_string() },
+                raw_header_length: header_data.len(),
+                pow_algorithm: format!("{:?}", header.pow.pow_algo),
             },
         }
     }
@@ -150,14 +151,14 @@ pub fn read_lmdb_headers_with_filter(path: &Path, db_name: &str, filter: BlockFi
     if let Ok((mut k, mut v)) = cursor.first::<[u8], [u8]>(&access) {
         loop {
             let height = u64::from_le_bytes(k.try_into().unwrap_or([0; 8]));
-            let value = v;
+            let header_data = v;
 
-            match bincode::deserialize::<BlockHeader>(value) {
+            match bincode::deserialize::<BlockHeader>(header_data) {
                 Ok(block_header) => {
                     let next_height = height + 1;
                     let next_height_bytes = next_height.to_le_bytes();
                     
-                    let explorer_hash = match access.get::<[u8], [u8]>(&db, &next_height_bytes) {
+                    let hash = match access.get::<[u8], [u8]>(&db, &next_height_bytes) {
                         Ok(next_header_data) => {
                             match bincode::deserialize::<BlockHeader>(next_header_data) {
                                 Ok(next_block_header) => hex::encode(&next_block_header.prev_hash),
@@ -167,7 +168,7 @@ pub fn read_lmdb_headers_with_filter(path: &Path, db_name: &str, filter: BlockFi
                         Err(_) => hex::encode(block_header.hash().as_slice()),
                     };
                     
-                    all_blocks.push(BlockSummary::from((height, explorer_hash, block_header)));
+                    all_blocks.push(BlockSummary::from((height, hash, block_header, header_data)));
                 },
                 Err(e) => {
                     eprintln!("Failed to deserialize block header for height {}: {}", height, e);
@@ -236,7 +237,7 @@ pub fn read_block_with_transactions(path: &Path, height: u64) -> Result<BlockDet
     let next_height_bytes = next_height.to_le_bytes();
     
     let mut is_latest = false;
-    let explorer_hash = match access.get::<[u8], [u8]>(&headers_db, &next_height_bytes) {
+    let hash = match access.get::<[u8], [u8]>(&headers_db, &next_height_bytes) {
         Ok(next_header_data) => {
             match bincode::deserialize::<BlockHeader>(next_header_data) {
                 Ok(next_block_header) => hex::encode(&next_block_header.prev_hash),
@@ -253,9 +254,9 @@ pub fn read_block_with_transactions(path: &Path, height: u64) -> Result<BlockDet
     
     println!("🔍 COMPLETE HEADER ANALYSIS for block {}:", height);
     if is_latest {
-        println!("  Explorer hash (fallback for latest block: computed hash): {}", explorer_hash);
+        println!("  Hash (fallback for latest block: computed hash): {}", hash);
     } else {
-        println!("  Explorer hash (from next block's prev_hash): {}", explorer_hash);
+        println!("  Hash (from next block's prev_hash): {}", hash);
     }
     println!("  Previous hash: {}", hex::encode(&block_header.prev_hash));
     println!("  Output MR: {}", hex::encode(&block_header.output_mr));
@@ -367,35 +368,29 @@ pub fn read_block_with_transactions(path: &Path, height: u64) -> Result<BlockDet
     println!("  📈 Total Transactions:  {:>8}", kernels_count);
     println!("  🔗 Total I/O Records:   {:>8}", utxos_count + inputs_count);
 
-    let header_analysis = HeaderAnalysis {
-        explorer_hash: explorer_hash.clone(),
-        previous_hash: hex::encode(&block_header.prev_hash),
-        output_mr: hex::encode(&block_header.output_mr),
-        kernel_mr: hex::encode(&block_header.kernel_mr),
-        input_mr: hex::encode(&block_header.input_mr),
-        total_kernel_offset: hex::encode(block_header.total_kernel_offset.as_bytes()),
-        total_script_offset: hex::encode(block_header.total_script_offset.as_bytes()),
-        pow_data_hash: if !block_header.pow.pow_data.is_empty() { hex::encode(&block_header.pow.pow_data) } else { "empty".to_string() },
-        raw_header_length: header_data.len(),
-        pow_algorithm: format!("{:?}", block_header.pow.pow_algo),
-    };
-
     Ok(BlockDetailSummary {
         height,
-        hash: explorer_hash, // Note: hash is explorer_hash
+        hash,
         header: BlockHeaderLite {
             version: block_header.version,
             height: block_header.height,
             previous_hash: hex::encode(&block_header.prev_hash[..]),
             timestamp: block_header.timestamp.as_u64(),
             nonce: block_header.nonce,
+            output_mr: hex::encode(&block_header.output_mr),
+            kernel_mr: hex::encode(&block_header.kernel_mr),
+            input_mr: hex::encode(&block_header.input_mr),
+            total_kernel_offset: hex::encode(block_header.total_kernel_offset.as_bytes()),
+            total_script_offset: hex::encode(block_header.total_script_offset.as_bytes()),
+            pow_data_hash: if !block_header.pow.pow_data.is_empty() { hex::encode(&block_header.pow.pow_data) } else { "empty".to_string() },
+            raw_header_length: header_data.len(),
+            pow_algorithm: format!("{:?}", block_header.pow.pow_algo),
         },
         transactions: TransactionSummary {
             inputs,
             outputs,
             kernels,
         },
-        header_analysis,
     })
 }
 

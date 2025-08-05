@@ -663,6 +663,7 @@
                         <thead>
                             <tr>
                                 <th>Height</th>
+                                <th>PoW</th>
                                 <th>Hash</th>
                                 <th>Timestamp</th>
                                 <th>Age</th>
@@ -671,7 +672,7 @@
                         </thead>
                         <tbody id="blocksTable">
                             <tr>
-                                <td colspan="5" class="loading">Loading recent blocks...</td>
+                                <td colspan="6" class="loading">Loading recent blocks...</td>
                             </tr>
                         </tbody>
                     </table>
@@ -1332,6 +1333,7 @@
                 
                 row.innerHTML = `
                     <td class="height-cell">${block.height ? block.height.toLocaleString() : 'N/A'}</td>
+                    <td class="pow-cell">${block.pow_algorithm || 'N/A'}</td>
                     <td class="hash-cell" title="${block.hash || ''}">${shortHash}</td>
                     <td class="timestamp-cell">${timeStr}</td>
                     <td class="age-cell">${ageStr}</td>
