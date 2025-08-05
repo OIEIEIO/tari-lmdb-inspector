@@ -1,6 +1,5 @@
-
 // File: src/lmdb_reader.rs
-// Version: 2.4.0 - Block-specific transaction data access with full details
+// Version: 2.9.0 - Fixed frontend to display computed hash instead of header bytes
 
 use std::path::Path;
 use lmdb_zero::{EnvBuilder, Database, ReadTransaction, ConstAccessor};
@@ -146,12 +145,8 @@ pub fn read_lmdb_headers_with_filter(path: &Path, db_name: &str, filter: BlockFi
             // Try to deserialize using Tari's actual BlockHeader struct
             match bincode::deserialize::<BlockHeader>(value) {
                 Ok(block_header) => {
-                    // Use the first 32 bytes as the block hash (standard LMDB storage)
-                    let block_hash = if value.len() >= 32 {
-                        hex::encode(&value[0..32])
-                    } else {
-                        "0".repeat(64) // Empty hash
-                    };
+                    // Use the computed block hash (actual block hash for frontend display)
+                    let block_hash = hex::encode(block_header.hash().as_slice());
                     
                     all_blocks.push(BlockSummary::from((height, block_hash, block_header)));
                 },
