@@ -894,7 +894,7 @@
                 <div class="table-header-controls">
                     <div class="search-container">
                         <input type="text" id="blockSearch" class="search-input" 
-                               placeholder="Search block height (123), range (100-200), or hash..." 
+                               placeholder="Search: height (123), range (100-200), hash (64 hex chars), or PoW algo..." 
                                onkeyup="handleSearch(event)">
                         <button class="control-button" onclick="clearSearch()">Clear</button>
                     </div>
@@ -947,7 +947,7 @@
 
         <div class="footer">
             <div id="errorMessages"></div>
-            <div>📡 Event-driven updates • Search any block by height, range (e.g., 100-200), or hash • Real-time block monitoring active</div>
+            <div>📡 Event-driven updates • Search: height, range (100-200), full hash (64 hex), or PoW algorithm • Real-time block monitoring</div>
         </div>
     </div>
 
@@ -1210,13 +1210,21 @@
                 }
             }
             
+            // Check if search term is a FULL HASH (64 hex characters)
+            const hashPattern = /^[a-fA-F0-9]{64}$/;
+            if (hashPattern.test(searchTerm)) {
+                // Search for specific hash via API (entire blockchain)
+                searchSpecificHash(searchTerm);
+                return;
+            }
+            
             // Check if search term is a single block height (number)
             const blockHeight = parseInt(searchTerm);
             if (!isNaN(blockHeight) && blockHeight > 0) {
                 // Search for specific block height via API
                 searchSpecificBlock(blockHeight);
             } else if (searchTerm.length > 0) {
-                // Regular text search in loaded blocks
+                // Regular text search in loaded blocks (partial hashes, PoW algorithms, etc.)
                 applyTextSearch(searchTerm);
             } else {
                 // Empty search - show all blocks
@@ -1294,6 +1302,69 @@
                 }
                 console.error('Range search error:', error);
                 displaySearchResult([], `❌ Error searching range ${startHeight}-${endHeight}: ${error.message}`);
+            }
+        }
+
+        async function searchSpecificHash(hash) {
+            try {
+                console.log('Searching entire blockchain for hash:', hash.substring(0, 20) + '...');
+                
+                // Enter search mode
+                isSearchMode = true;
+                currentSearchTerm = hash;
+                
+                // Create new AbortController for this search
+                window.currentSearchController = new AbortController();
+                
+                // Show loading in table
+                const tbody = document.getElementById('blocksTable');
+                if (tbody) {
+                    tbody.innerHTML = '<tr><td colspan="6" class="loading">🔍 Searching entire blockchain for hash ' + hash.substring(0, 20) + '...</td></tr>';
+                }
+                
+                // Update pagination info
+                const paginationInfo = document.getElementById('paginationInfo');
+                if (paginationInfo) {
+                    paginationInfo.textContent = 'Searching entire blockchain by hash...';
+                }
+                
+                const response = await fetch(`/api/block/hash/${hash}`, {
+                    signal: window.currentSearchController.signal
+                });
+                
+                if (response.ok) {
+                    const blockData = await response.json();
+                    console.log('Found block by hash:', blockData);
+                    
+                    // Convert API response to our block format
+                    const block = {
+                        height: blockData.height,
+                        hash: blockData.hash,
+                        timestamp: blockData.header.timestamp,
+                        interval_seconds: null, // We don't have previous block context
+                        pow_algorithm: blockData.header.pow_algorithm || 'N/A'
+                    };
+                    
+                    // Display single block result
+                    displaySearchResult([block], `✅ Block found by hash ${hash.substring(0, 20)}...`);
+                    
+                } else if (response.status === 404) {
+                    // Block not found
+                    displaySearchResult([], `❌ No block found with hash ${hash.substring(0, 20)}...`);
+                } else if (response.status === 400) {
+                    // Invalid hash format
+                    displaySearchResult([], `❌ Invalid hash format: must be 64 hex characters`);
+                } else {
+                    throw new Error(`HTTP ${response.status}`);
+                }
+                
+            } catch (error) {
+                if (error.name === 'AbortError') {
+                    console.log('Hash search cancelled');
+                    return;
+                }
+                console.error('Hash search error:', error);
+                displaySearchResult([], `❌ Error searching for hash: ${error.message}`);
             }
         }
 

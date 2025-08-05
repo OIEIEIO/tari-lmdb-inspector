@@ -1,5 +1,5 @@
-// File: src/lmdb_reader.rs
-// Version: 2.21.0 - Removed explorer_hash, fixed move errors
+// File: src/lmdb_reader.rs  
+// Version: 2.22.0 - Added blockchain-wide hash searching
 
 use std::path::Path;
 use lmdb_zero::{EnvBuilder, Database, ReadTransaction, ConstAccessor};
@@ -128,6 +128,87 @@ impl From<(u64, String, BlockHeader, &[u8])> for BlockSummary {
             },
         }
     }
+}
+
+/// Search entire blockchain for a block by hash
+pub fn search_block_by_hash(path: &Path, target_hash: &str) -> Result<Option<BlockDetailSummary>> {
+    println!("🔍 Searching entire blockchain for hash: {}...", &target_hash[0..20.min(target_hash.len())]);
+    
+    let path_str = path.to_str().ok_or_else(|| anyhow::anyhow!("Invalid path"))?;
+
+    let mut builder = EnvBuilder::new()?;
+    builder.set_maxdbs(32)?;
+
+    let env = unsafe {
+        builder.open(path_str, lmdb_zero::open::Flags::empty(), 0o600)?
+    };
+
+    let headers_db = Database::open(&env, Some("headers"), &DatabaseOptions::defaults())?;
+    let txn = ReadTransaction::new(&env)?;
+    let access = txn.access();
+    let mut cursor = txn.cursor(&headers_db)?;
+
+    // Convert target hash to lowercase for comparison
+    let target_hash_lower = target_hash.to_lowercase();
+    let mut blocks_searched = 0;
+
+    // Iterate through all blocks to find matching hash
+    if let Ok((mut k, mut v)) = cursor.first::<[u8], [u8]>(&access) {
+        loop {
+            let height = u64::from_le_bytes(k.try_into().unwrap_or([0; 8]));
+            let header_data = v;
+            blocks_searched += 1;
+
+            // Show progress every 10,000 blocks
+            if blocks_searched % 10_000 == 0 {
+                println!("  📊 Searched {} blocks...", blocks_searched);
+            }
+
+            match bincode::deserialize::<BlockHeader>(header_data) {
+                Ok(block_header) => {
+                    // Compute the block hash (same logic as other functions)
+                    let next_height = height + 1;
+                    let next_height_bytes = next_height.to_le_bytes();
+                    
+                    let block_hash = match access.get::<[u8], [u8]>(&headers_db, &next_height_bytes) {
+                        Ok(next_header_data) => {
+                            match bincode::deserialize::<BlockHeader>(next_header_data) {
+                                Ok(next_block_header) => hex::encode(&next_block_header.prev_hash),
+                                Err(_) => hex::encode(block_header.hash().as_slice()),
+                            }
+                        },
+                        Err(_) => {
+                            // This is the latest block, use computed hash
+                            hex::encode(block_header.hash().as_slice())
+                        }
+                    };
+                    
+                    // Check if this hash matches our target
+                    if block_hash.to_lowercase() == target_hash_lower {
+                        println!("✅ Found matching block at height {} after searching {} blocks", height, blocks_searched);
+                        
+                        // Found the block! Now get full details using existing function
+                        return Ok(Some(read_block_with_transactions(path, height)?));
+                    }
+                },
+                Err(e) => {
+                    eprintln!("Failed to deserialize block header for height {}: {}", height, e);
+                }
+            }
+
+            // Move to next block
+            match cursor.next::<[u8], [u8]>(&access) {
+                Ok((next_k, next_v)) => {
+                    k = next_k;
+                    v = next_v;
+                }
+                Err(_) => break, // End of database
+            }
+        }
+    }
+
+    println!("❌ Hash not found after searching {} blocks", blocks_searched);
+    Ok(None)
 }
 
 /// Read block headers with filtering options

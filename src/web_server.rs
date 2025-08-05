@@ -1,5 +1,5 @@
 // File: src/web_server.rs
-// Web server with dashboard and WebSocket API - Block Height Monitoring
+// Version: 2.22.0 - Added blockchain-wide hash searching
 
 use anyhow::Result;
 use axum::{
@@ -19,7 +19,7 @@ use tower_http::cors::CorsLayer;
 use notify::{Watcher, RecursiveMode, Event};
 
 use crate::data_models::{AppConfig, DashboardData, DatabaseStats, WebSocketMessage};
-use crate::lmdb_reader::{read_lmdb_headers_with_filter, read_block_with_transactions, BlockFilter};
+use crate::lmdb_reader::{read_lmdb_headers_with_filter, read_block_with_transactions, search_block_by_hash, BlockFilter};
 
 /// Query parameters for range search
 #[derive(Deserialize)]
@@ -60,6 +60,7 @@ pub async fn run_web_mode(
         .route("/", get(dashboard_html))
         .route("/api/dashboard", get(get_dashboard_data))
         .route("/api/block/:height", get(get_block_detail))
+        .route("/api/block/hash/:hash", get(get_block_by_hash))
         .route("/api/blocks/range", get(get_blocks_range))
         .route("/ws", get(websocket_handler))
         .with_state(app_state.clone());
@@ -82,7 +83,8 @@ pub async fn run_web_mode(
     println!("🔌 WebSocket endpoint: ws://{}/ws", addr);
     println!("📊 API endpoints:");
     println!("   GET /api/dashboard - Dashboard data");
-    println!("   GET /api/block/:height - Block details");
+    println!("   GET /api/block/:height - Block details by height");
+    println!("   GET /api/block/hash/:hash - Block details by hash (entire blockchain)");
     println!("   GET /api/blocks/range?start=X&end=Y - Block ranges (max 1000)");
     println!("🔍 File system watcher: STARTING (monitoring LMDB changes)");
     
@@ -193,7 +195,7 @@ async fn get_dashboard_data(State(state): State<AppState>) -> Json<DashboardData
     Json(data.clone())
 }
 
-/// Get block details via REST API
+/// Get block details by height via REST API
 async fn get_block_detail(
     axum::extract::Path(height): axum::extract::Path<u64>,
     State(state): State<AppState>,
@@ -226,6 +228,62 @@ async fn get_block_detail(
             Ok(Json(response))
         }
         Err(_) => Err(StatusCode::NOT_FOUND),
+    }
+}
+
+/// Get block details by hash via REST API (searches entire blockchain)
+async fn get_block_by_hash(
+    axum::extract::Path(hash): axum::extract::Path<String>,
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    // Validate hash format (should be 64 hex characters)
+    if hash.len() != 64 {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    
+    // Validate hex characters
+    if !hash.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    
+    println!("🔍 API request: searching entire blockchain for hash {}", &hash[0..20]);
+    
+    match search_block_by_hash(&state.config.database_path, &hash) {
+        Ok(Some(block_detail)) => {
+            println!("✅ Hash search successful: found block {}", block_detail.height);
+            let response = serde_json::json!({
+                "height": block_detail.height,
+                "hash": block_detail.hash,
+                "header": {
+                    "version": block_detail.header.version,
+                    "timestamp": block_detail.header.timestamp,
+                    "nonce": block_detail.header.nonce,
+                    "previous_hash": block_detail.header.previous_hash,
+                    "output_mr": block_detail.header.output_mr,
+                    "kernel_mr": block_detail.header.kernel_mr,
+                    "input_mr": block_detail.header.input_mr,
+                    "total_kernel_offset": block_detail.header.total_kernel_offset,
+                    "total_script_offset": block_detail.header.total_script_offset,
+                    "pow_data_hash": block_detail.header.pow_data_hash,
+                    "raw_header_length": block_detail.header.raw_header_length,
+                    "pow_algorithm": block_detail.header.pow_algorithm
+                },
+                "transactions": {
+                    "inputs": block_detail.transactions.inputs,
+                    "outputs": block_detail.transactions.outputs,
+                    "kernels": block_detail.transactions.kernels
+                }
+            });
+            Ok(Json(response))
+        }
+        Ok(None) => {
+            println!("❌ Hash search failed: block not found");
+            Err(StatusCode::NOT_FOUND)
+        }
+        Err(e) => {
+            eprintln!("❌ Hash search error: {}", e);
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
     }
 }
 
@@ -536,7 +594,7 @@ async fn update_dashboard_data(state: &AppState) -> Result<()> {
     data.network_stats = network_stats;
     data.last_updated = chrono::Utc::now().timestamp() as u64;
     
-    println!("⚡ Full blockchain searchable via search/range queries");
+    println!("⚡ Full blockchain searchable via search/range/hash queries");
     println!("✅ Dashboard ready - latest height: {}", latest_height);
 
     Ok(())
