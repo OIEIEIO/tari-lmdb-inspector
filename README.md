@@ -6,7 +6,7 @@ A powerful, multi-interface tool for exploring and debugging Tari blockchain dat
 
 ## 📸 Dashboard Preview
 
-![Tari LMDB Inspector Web Dashboard](screenshots/web-dashboard.png)
+![Tari LMDB Inspector Web Dashboard](screenshots/web-dashboard-1.png)
 
 *Professional web dashboard with real-time blockchain monitoring, comprehensive statistics, and interactive block explorer*
 
