@@ -213,7 +213,8 @@ async fn get_block_detail(
                     "inputs": block_detail.transactions.inputs,
                     "outputs": block_detail.transactions.outputs,
                     "kernels": block_detail.transactions.kernels
-                }
+                },
+                "header_analysis": block_detail.header_analysis
             });
             Ok(Json(response))
         }

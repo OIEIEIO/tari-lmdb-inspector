@@ -1,5 +1,5 @@
 // File: src/lmdb_reader.rs
-// Version: 2.15.0 - Use prev_hash from next block to match Tari explorer display
+// Version: 2.19.0 - Changed header_analysis to structured HeaderAnalysis for JSON
 
 use std::path::Path;
 use lmdb_zero::{EnvBuilder, Database, ReadTransaction, ConstAccessor};
@@ -47,20 +47,16 @@ pub enum BlockFilter {
     Specific(u64),          // Show specific block height
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)] 
 pub struct BlockHeaderLite {
-    #[allow(dead_code)]
     pub version: u16,
-    #[allow(dead_code)]
     pub height: u64,
-    #[allow(dead_code)]
     pub previous_hash: String,
     pub timestamp: u64,
-    #[allow(dead_code)]
     pub nonce: u64,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct BlockSummary {
     pub height: u64,
     pub hash: String,
@@ -84,7 +80,6 @@ pub struct InputSummary {
 pub struct OutputSummary {
     pub commitment: String,
     pub features: String,
-    #[allow(dead_code)]
     pub script_type: String,
 }
 
@@ -95,12 +90,27 @@ pub struct KernelSummary {
     pub lock_height: u64,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
+pub struct HeaderAnalysis {
+    pub explorer_hash: String,
+    pub previous_hash: String,
+    pub output_mr: String,
+    pub kernel_mr: String,
+    pub input_mr: String,
+    pub total_kernel_offset: String,
+    pub total_script_offset: String,
+    pub pow_data_hash: String,
+    pub raw_header_length: usize,
+    pub pow_algorithm: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct BlockDetailSummary {
     pub height: u64,
     pub hash: String,
     pub header: BlockHeaderLite,
     pub transactions: TransactionSummary,
+    pub header_analysis: HeaderAnalysis,  // Changed to structured
 }
 
 impl From<(u64, String, BlockHeader)> for BlockSummary {
@@ -142,37 +152,25 @@ pub fn read_lmdb_headers_with_filter(path: &Path, db_name: &str, filter: BlockFi
             let height = u64::from_le_bytes(k.try_into().unwrap_or([0; 8]));
             let value = v;
 
-            // Try to deserialize using Tari's actual BlockHeader struct
             match bincode::deserialize::<BlockHeader>(value) {
                 Ok(block_header) => {
-                    // Get explorer hash by looking up next block's prev_hash
                     let next_height = height + 1;
                     let next_height_bytes = next_height.to_le_bytes();
                     
                     let explorer_hash = match access.get::<[u8], [u8]>(&db, &next_height_bytes) {
                         Ok(next_header_data) => {
                             match bincode::deserialize::<BlockHeader>(next_header_data) {
-                                Ok(next_block_header) => {
-                                    // This block's explorer hash is the next block's prev_hash
-                                    hex::encode(&next_block_header.prev_hash)
-                                },
-                                Err(_) => {
-                                    // Fallback: use computed hash if next block can't be deserialized
-                                    hex::encode(block_header.hash().as_slice())
-                                }
+                                Ok(next_block_header) => hex::encode(&next_block_header.prev_hash),
+                                Err(_) => hex::encode(block_header.hash().as_slice()),
                             }
                         },
-                        Err(_) => {
-                            // No next block exists (this is the latest block) - use computed hash
-                            hex::encode(block_header.hash().as_slice())
-                        }
+                        Err(_) => hex::encode(block_header.hash().as_slice()),
                     };
                     
                     all_blocks.push(BlockSummary::from((height, explorer_hash, block_header)));
                 },
                 Err(e) => {
                     eprintln!("Failed to deserialize block header for height {}: {}", height, e);
-                    // Continue to next block instead of failing completely
                 }
             }
 
@@ -186,21 +184,17 @@ pub fn read_lmdb_headers_with_filter(path: &Path, db_name: &str, filter: BlockFi
         }
     }
 
-    // Apply filter
+    // Apply filter without moving all_blocks twice
     let summaries = match filter {
         BlockFilter::LastN(n) => {
-            let start_idx = all_blocks.len().saturating_sub(n);
-            all_blocks.into_iter().skip(start_idx).collect()
+            let len = all_blocks.len();
+            all_blocks.into_iter().skip(len.saturating_sub(n)).collect()
         },
         BlockFilter::Range(start, end) => {
-            all_blocks.into_iter()
-                .filter(|block| block.height >= start && block.height <= end)
-                .collect()
+            all_blocks.into_iter().filter(|block| block.height >= start && block.height <= end).collect()
         },
         BlockFilter::Specific(height) => {
-            all_blocks.into_iter()
-                .filter(|block| block.height == height)
-                .collect()
+            all_blocks.into_iter().filter(|block| block.height == height).collect()
         },
     };
 
@@ -218,7 +212,6 @@ pub fn read_block_with_transactions(path: &Path, height: u64) -> Result<BlockDet
         builder.open(path_str, lmdb_zero::open::Flags::empty(), 0o600)?
     };
 
-    // Open databases as Results to match original
     let headers_db = Database::open(&env, Some("headers"), &DatabaseOptions::defaults())?;
     let utxos_result = Database::open(&env, Some("utxos"), &DatabaseOptions::defaults());
     let inputs_result = Database::open(&env, Some("inputs"), &DatabaseOptions::defaults());
@@ -233,45 +226,53 @@ pub fn read_block_with_transactions(path: &Path, height: u64) -> Result<BlockDet
     let txn = ReadTransaction::new(&env)?;
     let access = txn.access();
 
-    // Get block header
     let height_bytes = height.to_le_bytes();
     let header_data: &[u8] = access.get(&headers_db, &height_bytes)
         .map_err(|_| anyhow::anyhow!("Block not found at height {}", height))?;
 
     let block_header: BlockHeader = bincode::deserialize(header_data)?;
     
-    // Get explorer hash by looking up next block's prev_hash (matches Tari explorer)
     let next_height = height + 1;
     let next_height_bytes = next_height.to_le_bytes();
     
+    let mut is_latest = false;
     let explorer_hash = match access.get::<[u8], [u8]>(&headers_db, &next_height_bytes) {
         Ok(next_header_data) => {
             match bincode::deserialize::<BlockHeader>(next_header_data) {
-                Ok(next_block_header) => {
-                    // This block's explorer hash is the next block's prev_hash
-                    hex::encode(&next_block_header.prev_hash)
-                },
-                Err(_) => {
-                    // Fallback: use computed hash if next block can't be deserialized
-                    hex::encode(block_header.hash().as_slice())
-                }
+                Ok(next_block_header) => hex::encode(&next_block_header.prev_hash),
+                Err(_) => hex::encode(block_header.hash().as_slice()),
             }
         },
         Err(_) => {
-            // No next block exists (this is the latest block) - use computed hash
+            is_latest = true;
             hex::encode(block_header.hash().as_slice())
         }
     };
     
-    // Use computed hash for transaction scanning (this might be the actual linking mechanism)
     let block_hash_bytes = block_header.hash();
     
-    println!("🔍 BLOCK HASH ANALYSIS for block {}:", height);
-    println!("  Explorer hash (from next block's prev_hash): {}", explorer_hash);
-    println!("  Computed hash (for transaction scanning): {}", hex::encode(block_hash_bytes.as_slice()));
-    println!("  ✅ Explorer hash now matches Tari explorer display!");
+    println!("🔍 COMPLETE HEADER ANALYSIS for block {}:", height);
+    if is_latest {
+        println!("  Explorer hash (fallback for latest block: computed hash): {}", explorer_hash);
+    } else {
+        println!("  Explorer hash (from next block's prev_hash): {}", explorer_hash);
+    }
+    println!("  Previous hash: {}", hex::encode(&block_header.prev_hash));
+    println!("  Output MR: {}", hex::encode(&block_header.output_mr));
+    println!("  Kernel MR: {}", hex::encode(&block_header.kernel_mr));
+    println!("  Input MR: {}", hex::encode(&block_header.input_mr));
+    println!("  Total kernel offset: {}", hex::encode(block_header.total_kernel_offset.as_bytes()));
+    println!("  Total script offset: {}", hex::encode(block_header.total_script_offset.as_bytes()));
+    println!("  PoW data/hash: {}", if !block_header.pow.pow_data.is_empty() { hex::encode(&block_header.pow.pow_data) } else { "empty".to_string() });
+    println!("  Raw header length: {} bytes", header_data.len());
+    println!("  PoW algorithm: {:?}", block_header.pow.pow_algo);
+    
+    // Keep raw header bytes for console debugging only
+    println!("  Header[0..32]: {}", hex::encode(&header_data[0..32.min(header_data.len())]));
+    println!("  Header[32..64]: {}", if header_data.len() >= 64 { hex::encode(&header_data[32..64]) } else { "insufficient_data".to_string() });
+    println!("  Header[64..96]: {}", if header_data.len() >= 96 { hex::encode(&header_data[64..96]) } else { "insufficient_data".to_string() });
+    println!("  {}", if header_data.len() <= 256 { format!("COMPLETE RAW HEADER: {}", hex::encode(header_data)) } else { format!("FIRST 256 BYTES: {}", hex::encode(&header_data[0..256])) });
 
-    // Fetch outputs
     let mut outputs = Vec::new();
     if let Ok(ref utxos_db) = utxos_result {
         let mut cursor = txn.cursor(&*utxos_db)?;
@@ -296,7 +297,6 @@ pub fn read_block_with_transactions(path: &Path, height: u64) -> Result<BlockDet
         }
     }
 
-    // Fetch inputs
     let mut inputs = Vec::new();
     if let Ok(ref inputs_db) = inputs_result {
         let mut cursor = txn.cursor(&*inputs_db)?;
@@ -320,7 +320,6 @@ pub fn read_block_with_transactions(path: &Path, height: u64) -> Result<BlockDet
         }
     }
 
-    // Fetch kernels
     let mut kernels = Vec::new();
     if let Ok(ref kernels_db) = kernels_result {
         let mut cursor = txn.cursor(&*kernels_db)?;
@@ -345,7 +344,6 @@ pub fn read_block_with_transactions(path: &Path, height: u64) -> Result<BlockDet
         }
     }
 
-    // Get database summaries (existing code)
     let utxos_count = if let Ok(utxos_db) = utxos_result {
         count_database_entries(&txn, &access, &utxos_db, "UTXOs")
     } else {
@@ -369,9 +367,22 @@ pub fn read_block_with_transactions(path: &Path, height: u64) -> Result<BlockDet
     println!("  📈 Total Transactions:  {:>8}", kernels_count);
     println!("  🔗 Total I/O Records:   {:>8}", utxos_count + inputs_count);
 
+    let header_analysis = HeaderAnalysis {
+        explorer_hash: explorer_hash.clone(),
+        previous_hash: hex::encode(&block_header.prev_hash),
+        output_mr: hex::encode(&block_header.output_mr),
+        kernel_mr: hex::encode(&block_header.kernel_mr),
+        input_mr: hex::encode(&block_header.input_mr),
+        total_kernel_offset: hex::encode(block_header.total_kernel_offset.as_bytes()),
+        total_script_offset: hex::encode(block_header.total_script_offset.as_bytes()),
+        pow_data_hash: if !block_header.pow.pow_data.is_empty() { hex::encode(&block_header.pow.pow_data) } else { "empty".to_string() },
+        raw_header_length: header_data.len(),
+        pow_algorithm: format!("{:?}", block_header.pow.pow_algo),
+    };
+
     Ok(BlockDetailSummary {
         height,
-        hash: explorer_hash,
+        hash: explorer_hash, // Note: hash is explorer_hash
         header: BlockHeaderLite {
             version: block_header.version,
             height: block_header.height,
@@ -384,6 +395,7 @@ pub fn read_block_with_transactions(path: &Path, height: u64) -> Result<BlockDet
             outputs,
             kernels,
         },
+        header_analysis,
     })
 }
 
@@ -400,20 +412,17 @@ fn count_database_entries(
         Ok(mut cursor) => {
             if let Ok((_key, _value)) = cursor.first::<[u8], [u8]>(access) {
                 let mut count = 1;
-                let max_count = 10_000_000; // Increased limit to 10M
+                let max_count = 10_000_000;
                 
-                // Count with progress indicators
                 while count < max_count {
                     match cursor.next::<[u8], [u8]>(access) {
                         Ok((_next_key, _next_value)) => {
                             count += 1;
-                            
-                            // Show progress every 250k entries for faster counting
                             if count % 250_000 == 0 {
                                 print!("{}M ", count / 1_000_000);
                             }
                         }
-                        Err(_) => break, // End of database
+                        Err(_) => break,
                     }
                 }
                 
