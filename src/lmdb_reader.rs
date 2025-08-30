@@ -1,5 +1,6 @@
-// File: src/lmdb_reader.rs  
-// Version: 2.22.0 - Added blockchain-wide hash searching
+// File: src/lmdb_reader.rs
+// Tree: tari-lmdb-inspector/src/lmdb_reader.rs  
+// Version: 2.23.0 - Added C29 Cuckaroo 29 error handling for 4-way hybrid mining
 
 use std::path::Path;
 use lmdb_zero::{EnvBuilder, Database, ReadTransaction, ConstAccessor};
@@ -10,8 +11,8 @@ use hex;
 use tari_utilities::byte_array::ByteArray;
 
 // Import Tari's actual structs
-use tari_core::blocks::BlockHeader;
-use tari_core::transactions::transaction_components::{TransactionInput, TransactionOutput, TransactionKernel};
+use tari_node_components::blocks::BlockHeader;
+use tari_transaction_components::transaction_components::{TransactionInput, TransactionOutput, TransactionKernel};
 use tari_common_types::types::FixedHash;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -132,7 +133,7 @@ impl From<(u64, String, BlockHeader, &[u8])> for BlockSummary {
 
 /// Search entire blockchain for a block by hash
 pub fn search_block_by_hash(path: &Path, target_hash: &str) -> Result<Option<BlockDetailSummary>> {
-    println!("🔍 Searching entire blockchain for hash: {}...", &target_hash[0..20.min(target_hash.len())]);
+    println!("Searching entire blockchain for hash: {}...", &target_hash[0..20.min(target_hash.len())]);
     
     let path_str = path.to_str().ok_or_else(|| anyhow::anyhow!("Invalid path"))?;
 
@@ -151,6 +152,7 @@ pub fn search_block_by_hash(path: &Path, target_hash: &str) -> Result<Option<Blo
     // Convert target hash to lowercase for comparison
     let target_hash_lower = target_hash.to_lowercase();
     let mut blocks_searched = 0;
+    let mut blocks_skipped = 0;
 
     // Iterate through all blocks to find matching hash
     if let Ok((mut k, mut v)) = cursor.first::<[u8], [u8]>(&access) {
@@ -161,7 +163,7 @@ pub fn search_block_by_hash(path: &Path, target_hash: &str) -> Result<Option<Blo
 
             // Show progress every 10,000 blocks
             if blocks_searched % 10_000 == 0 {
-                println!("  📊 Searched {} blocks...", blocks_searched);
+                println!("  Searched {} blocks (skipped {} with newer formats)...", blocks_searched, blocks_skipped);
             }
 
             match bincode::deserialize::<BlockHeader>(header_data) {
@@ -185,14 +187,18 @@ pub fn search_block_by_hash(path: &Path, target_hash: &str) -> Result<Option<Blo
                     
                     // Check if this hash matches our target
                     if block_hash.to_lowercase() == target_hash_lower {
-                        println!("✅ Found matching block at height {} after searching {} blocks", height, blocks_searched);
+                        println!("Found matching block at height {} after searching {} blocks", height, blocks_searched);
                         
                         // Found the block! Now get full details using existing function
                         return Ok(Some(read_block_with_transactions(path, height)?));
                     }
                 },
                 Err(e) => {
-                    eprintln!("Failed to deserialize block header for height {}: {}", height, e);
+                    // Skip blocks mined with C29 Cuckaroo 29 algorithm (variant 3)
+                    blocks_skipped += 1;
+                    if blocks_searched % 10_000 == 0 {
+                        eprintln!("Skipping block {} (mined with C29 algorithm): {}", height, e);
+                    }
                 }
             }
 
@@ -207,7 +213,7 @@ pub fn search_block_by_hash(path: &Path, target_hash: &str) -> Result<Option<Blo
         }
     }
 
-    println!("❌ Hash not found after searching {} blocks", blocks_searched);
+    println!("Hash not found after searching {} blocks (skipped {} C29-mined blocks)", blocks_searched, blocks_skipped);
     Ok(None)
 }
 
@@ -228,6 +234,7 @@ pub fn read_lmdb_headers_with_filter(path: &Path, db_name: &str, filter: BlockFi
     let mut cursor = txn.cursor(&db)?;
 
     let mut all_blocks = Vec::new();
+    let mut blocks_skipped = 0;
 
     if let Ok((mut k, mut v)) = cursor.first::<[u8], [u8]>(&access) {
         loop {
@@ -252,7 +259,9 @@ pub fn read_lmdb_headers_with_filter(path: &Path, db_name: &str, filter: BlockFi
                     all_blocks.push(BlockSummary::from((height, hash, block_header, header_data)));
                 },
                 Err(e) => {
-                    eprintln!("Failed to deserialize block header for height {}: {}", height, e);
+                    // Skip blocks mined with C29 Cuckaroo 29 algorithm (variant 3)
+                    blocks_skipped += 1;
+                    eprintln!("Skipping block {} (mined with C29 algorithm): {}", height, e);
                 }
             }
 
@@ -264,6 +273,10 @@ pub fn read_lmdb_headers_with_filter(path: &Path, db_name: &str, filter: BlockFi
                 Err(_) => break,
             }
         }
+    }
+
+    if blocks_skipped > 0 {
+        println!("Note: Skipped {} blocks mined with C29 algorithm. Update dependencies to view C29-mined blocks.", blocks_skipped);
     }
 
     // Apply filter without moving all_blocks twice
@@ -300,10 +313,10 @@ pub fn read_block_with_transactions(path: &Path, height: u64) -> Result<BlockDet
     let kernels_result = Database::open(&env, Some("kernels"), &DatabaseOptions::defaults());
 
     println!("Database availability:");
-    println!("  headers: ✅ Available");
-    println!("  utxos: {}", if utxos_result.is_ok() { "✅ Available" } else { "❌ Not found" });
-    println!("  inputs: {}", if inputs_result.is_ok() { "✅ Available" } else { "❌ Not found" });
-    println!("  kernels: {}", if kernels_result.is_ok() { "✅ Available" } else { "❌ Not found" });
+    println!("  headers: Available");
+    println!("  utxos: {}", if utxos_result.is_ok() { "Available" } else { "Not found" });
+    println!("  inputs: {}", if inputs_result.is_ok() { "Available" } else { "Not found" });
+    println!("  kernels: {}", if kernels_result.is_ok() { "Available" } else { "Not found" });
 
     let txn = ReadTransaction::new(&env)?;
     let access = txn.access();
@@ -312,7 +325,16 @@ pub fn read_block_with_transactions(path: &Path, height: u64) -> Result<BlockDet
     let header_data: &[u8] = access.get(&headers_db, &height_bytes)
         .map_err(|_| anyhow::anyhow!("Block not found at height {}", height))?;
 
-    let block_header: BlockHeader = bincode::deserialize(header_data)?;
+    let block_header: BlockHeader = match bincode::deserialize(header_data) {
+        Ok(header) => header,
+        Err(e) => {
+            return Err(anyhow::anyhow!(
+                "Cannot read block {} - was mined using C29 Cuckaroo 29 algorithm: {}. \
+                Update Tari dependencies to support C29-mined blocks.", 
+                height, e
+            ));
+        }
+    };
     
     let next_height = height + 1;
     let next_height_bytes = next_height.to_le_bytes();
@@ -333,7 +355,7 @@ pub fn read_block_with_transactions(path: &Path, height: u64) -> Result<BlockDet
     
     let block_hash_bytes = block_header.hash();
     
-    println!("🔍 COMPLETE HEADER ANALYSIS for block {}:", height);
+    println!("COMPLETE HEADER ANALYSIS for block {}:", height);
     if is_latest {
         println!("  Hash (fallback for latest block: computed hash): {}", hash);
     } else {
@@ -442,12 +464,12 @@ pub fn read_block_with_transactions(path: &Path, height: u64) -> Result<BlockDet
         0
     };
 
-    println!("📊 Transaction Database Summary:");
-    println!("  💰 UTXOs (Outputs):     {:>8} transactions", utxos_count);
-    println!("  📥 Inputs:              {:>8} transactions", inputs_count);
-    println!("  ⚡ Kernels:             {:>8} transactions", kernels_count);
-    println!("  📈 Total Transactions:  {:>8}", kernels_count);
-    println!("  🔗 Total I/O Records:   {:>8}", utxos_count + inputs_count);
+    println!("Transaction Database Summary:");
+    println!("  UTXOs (Outputs):     {:>8} transactions", utxos_count);
+    println!("  Inputs:              {:>8} transactions", inputs_count);
+    println!("  Kernels:             {:>8} transactions", kernels_count);
+    println!("  Total Transactions:  {:>8}", kernels_count);
+    println!("  Total I/O Records:   {:>8}", utxos_count + inputs_count);
 
     Ok(BlockDetailSummary {
         height,
@@ -482,7 +504,7 @@ fn count_database_entries(
     db: &Database,
     db_type: &str
 ) -> usize {
-    print!("🔍 Counting {} database entries... ", db_type);
+    print!("Counting {} database entries... ", db_type);
     
     match txn.cursor(db) {
         Ok(mut cursor) => {
@@ -503,19 +525,19 @@ fn count_database_entries(
                 }
                 
                 if count >= max_count {
-                    println!("→ 10M+ entries (stopped counting)");
+                    println!("-> 10M+ entries (stopped counting)");
                     count
                 } else {
-                    println!("→ {} total entries", count);
+                    println!("-> {} total entries", count);
                     count
                 }
             } else {
-                println!("→ 0 entries (empty)");
+                println!("-> 0 entries (empty)");
                 0
             }
         },
         Err(_) => {
-            println!("→ Error accessing database");
+            println!("-> Error accessing database");
             0
         }
     }
@@ -526,3 +548,7 @@ fn count_database_entries(
 pub fn read_lmdb_headers(path: &Path, db_name: &str) -> Result<Vec<BlockSummary>> {
     read_lmdb_headers_with_filter(path, db_name, BlockFilter::LastN(10))
 }
+
+// File: src/lmdb_reader.rs
+// Tree: tari-lmdb-inspector/src/lmdb_reader.rs
+// Created: 2025-08-30 18:45:00

@@ -256,7 +256,7 @@ pub fn test_block_hash_as_prefix(path: &Path, block_height: u64) -> Result<()> {
     println!("Linking hash (first 32 bytes): {}", hex::encode(linking_hash));
     
     // Also show computed hash for comparison
-    use tari_core::blocks::BlockHeader;
+    use tari_node_components::blocks::BlockHeader;
     let header: BlockHeader = bincode::deserialize(header_data)?;
     let computed_hash = header.hash();
     println!("Computed block hash:            {}", hex::encode(computed_hash.as_slice()));
@@ -462,7 +462,7 @@ pub fn investigate_block_to_transaction_links(path: &Path, block_height: u64) ->
         .map_err(|_| anyhow::anyhow!("Block not found at height {}", block_height))?;
 
     // Parse the header using Tari's BlockHeader struct
-    use tari_core::blocks::BlockHeader;
+    use tari_node_components::blocks::BlockHeader;
     let header: BlockHeader = bincode::deserialize(header_data)?;
     let block_hash = header.hash();
     
