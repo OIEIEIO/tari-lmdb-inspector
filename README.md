@@ -56,6 +56,8 @@ The executable will be available at `target/release/tari-lmdb-inspector`.
 # Launch web dashboard (recommended for new users)
 cargo run -- -d ~/.tari/mainnet/data/base_node/db web --port 8080
 
+cargo run -- -d ~/.tari/esmeralda/data/base_node/db web --port 8080
+
 # Open browser to http://localhost:8080
 ```
 
